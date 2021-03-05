@@ -279,6 +279,7 @@ public class NewRandomizerGUI {
     private JCheckBox mtFollowEvolutionsCheckBox;
     private JCheckBox stpPercentageLevelModifierCheckBox;
     private JSlider stpPercentageLevelModifierSlider;
+    private JButton batchRandomizeButton;
 
     private static JFrame frame;
 
@@ -291,6 +292,7 @@ public class NewRandomizerGUI {
     private ResourceBundle bundle;
     protected RomHandler.Factory[] checkHandlers;
     private RomHandler romHandler;
+    private String originalRom;
 
     private boolean presetMode = false;
     private boolean initialPopup = true;
@@ -464,6 +466,8 @@ public class NewRandomizerGUI {
             }
         });
         randomizeSaveButton.addActionListener(e -> saveROM());
+        batchRandomizeButton.addActionListener(e -> batchGenerateROMs());
+        raceModeCheckBox.addActionListener(e -> raceModeToggle());
         premadeSeedButton.addActionListener(e -> presetLoader());
         loadSettingsButton.addActionListener(e -> loadQS());
         saveSettingsButton.addActionListener(e -> saveQS());
@@ -525,6 +529,71 @@ public class NewRandomizerGUI {
         spRandomizeStarterHeldItemsCheckBox.addActionListener(e -> enableOrDisableSubControls());
         tmLevelupMoveSanityCheckBox.addActionListener(e -> enableOrDisableSubControls());
         mtLevelupMoveSanityCheckBox.addActionListener(e -> enableOrDisableSubControls());
+    }
+
+    private void raceModeToggle() {
+        batchRandomizeButton.setEnabled(!raceModeCheckBox.isSelected());
+    }
+
+    private void batchGenerateROMs() {
+        if (romHandler == null) {
+            return; // none loaded
+        }
+        if (limitPokemonCheckBox.isSelected()
+                && (this.currentRestrictions == null || this.currentRestrictions.nothingSelected())) {
+            JOptionPane.showMessageDialog(frame, bundle.getString("GUI.pokeLimitNotChosen"));
+            return;
+        }
+        BatchGenerateDialog bgd = new BatchGenerateDialog(frame);
+        if (bgd.isCompleted()) {
+            File fh = bgd.getFile();
+            int count = bgd.getBatchCount();
+            if (fh != null && count > 0) {
+                // Fix or add extension
+                List<String> extensions = new ArrayList<>(Arrays.asList("sgb", "gbc", "gba", "nds", "cxi"));
+                extensions.remove(romHandler.getDefaultExtension());
+                final File fixed_fh = FileFunctions.fixFilename(fh, this.romHandler.getDefaultExtension(), extensions);
+                opDialog = new OperationDialog(bundle.getString("GUI.savingText"), frame, true);
+                Thread t = new Thread(() -> {
+                    SwingUtilities.invokeLater(() -> opDialog.setVisible(true));
+                    final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    final PrintStream verboseLog = getRandomizationLog(baos);
+                    Settings batchSettings;
+                    try {
+                        batchSettings = createSettingsFromState(FileFunctions.getCustomNames());
+                    } catch (IOException ex) {
+                        JOptionPane.showMessageDialog(frame, bundle.getString("GUI.cantLoadCustomNames"));
+                        batchSettings = createSettingsFromState(new CustomNamesSet());
+                    }
+                    final Randomizer randomizer = new Randomizer(batchSettings, romHandler, false);
+                    for (int i = 1; i <= count; i++) {
+                        opDialog.setTitle(i + "/" + count);
+                        long seed = RandomSource.pickSeed();
+                        RandomSource.seed(seed);
+                        romHandler.setLog(verboseLog);
+                        File appended = FileFunctions.appendSeedCount(fixed_fh, i);
+                        // Something went wrong, don't make the file.
+                        if (appended == null) {
+                            continue;
+                        }
+                        randomizer.randomize(appended.getAbsolutePath(), verboseLog, seed);
+                        if (i != count) {
+                            setRomHandlerRom(originalRom);
+                            initialState();
+                        }
+                    }
+                    SwingUtilities.invokeLater(() -> {
+                        opDialog.setVisible(false);
+                        if (this.unloadGameOnSuccess) {
+                            romHandler = null;
+                        }
+                        initialState();
+                    });
+                });
+                t.start();
+            }
+
+        }
     }
 
     private void showInitialPopup() {
@@ -685,21 +754,8 @@ public class NewRandomizerGUI {
                     }
                     opDialog = new OperationDialog(bundle.getString("GUI.loadingText"), frame, true);
                     Thread t = new Thread(() -> {
-                        boolean romLoaded = false;
                         SwingUtilities.invokeLater(() -> opDialog.setVisible(true));
-                        try {
-                            this.romHandler.loadRom(fh.getAbsolutePath());
-                            if (gameUpdates.containsKey(this.romHandler.getROMCode())) {
-                                this.romHandler.loadGameUpdate(gameUpdates.get(this.romHandler.getROMCode()));
-                            }
-                            romLoaded = true;
-                        } catch (EncryptedROMException ex) {
-                            JOptionPane.showMessageDialog(mainPanel,
-                                    String.format(bundle.getString("GUI.encryptedRom"), fh.getAbsolutePath()));
-                        } catch (Exception ex) {
-                            attemptToLogException(ex, "GUI.loadFailed", "GUI.loadFailedNoLog", null, null);
-                        }
-                        final boolean loadSuccess = romLoaded;
+                        final boolean loadSuccess = setRomHandlerRom(fh.getAbsolutePath());
                         SwingUtilities.invokeLater(() -> {
                             this.opDialog.setVisible(false);
                             this.initialState();
@@ -716,6 +772,24 @@ public class NewRandomizerGUI {
             JOptionPane.showMessageDialog(mainPanel,
                     String.format(bundle.getString("GUI.unsupportedRom"), fh.getName()));
         }
+    }
+
+    private boolean setRomHandlerRom(String romPath) {
+        boolean romLoaded = false;
+        try {
+            this.romHandler.loadRom(romPath);
+            if (gameUpdates.containsKey(this.romHandler.getROMCode())) {
+                this.romHandler.loadGameUpdate(gameUpdates.get(this.romHandler.getROMCode()));
+            }
+            originalRom = romPath;
+            romLoaded = true;
+        } catch (EncryptedROMException ex) {
+            JOptionPane.showMessageDialog(mainPanel,
+                    String.format(bundle.getString("GUI.encryptedRom"), romPath));
+        } catch (Exception ex) {
+            attemptToLogException(ex, "GUI.loadFailed", "GUI.loadFailedNoLog", null, null);
+        }
+        return romLoaded;
     }
 
     private void saveROM() {
@@ -844,19 +918,19 @@ public class NewRandomizerGUI {
         }
     }
 
-    private void performRandomization(final String filename, final long seed, CustomNamesSet customNames, boolean saveAsDirectory) {
-        final Settings settings = createSettingsFromState(customNames);
-        final boolean raceMode = settings.isRaceMode();
-        // Setup verbose log
-        final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    private PrintStream getRandomizationLog(ByteArrayOutputStream baos) {
         PrintStream log;
         try {
-            log = new PrintStream(baos, false, "UTF-8");
+            return new PrintStream(baos, false, "UTF-8");
         } catch (UnsupportedEncodingException e) {
-            log = new PrintStream(baos);
+            return new PrintStream(baos);
         }
+    }
 
-        final PrintStream verboseLog = log;
+    private void performRandomization(final String filename, final long seed, CustomNamesSet customNames, boolean saveAsDirectory) {
+        final Settings settings = createSettingsFromState(customNames);
+        final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        final PrintStream verboseLog = getRandomizationLog(baos);
 
         try {
             final AtomicInteger finishedCV = new AtomicInteger(0);
@@ -884,36 +958,7 @@ public class NewRandomizerGUI {
                 if (succeededSave) {
                     SwingUtilities.invokeLater(() -> {
                         opDialog.setVisible(false);
-                        // Log?
-                        verboseLog.close();
-                        byte[] out = baos.toByteArray();
-
-                        if (raceMode) {
-                            JOptionPane.showMessageDialog(frame,
-                                    String.format(bundle.getString("GUI.raceModeCheckValuePopup"),
-                                            finishedCV.get()));
-                        } else {
-                            int response = JOptionPane.showConfirmDialog(frame,
-                                    bundle.getString("GUI.saveLogDialog.text"),
-                                    bundle.getString("GUI.saveLogDialog.title"),
-                                    JOptionPane.YES_NO_OPTION);
-                            if (response == JOptionPane.YES_OPTION) {
-                                try {
-                                    FileOutputStream fos = new FileOutputStream(filename + ".log");
-                                    fos.write(0xEF);
-                                    fos.write(0xBB);
-                                    fos.write(0xBF);
-                                    fos.write(out);
-                                    fos.close();
-                                } catch (IOException e) {
-                                    JOptionPane.showMessageDialog(frame,
-                                            bundle.getString("GUI.logSaveFailed"));
-                                    return;
-                                }
-                                JOptionPane.showMessageDialog(frame,
-                                        String.format(bundle.getString("GUI.logSaved"), filename));
-                            }
-                        }
+                        finalizeLog(verboseLog, baos, settings.isRaceMode(), finishedCV, filename);
                         if (presetMode) {
                             JOptionPane.showMessageDialog(frame,
                                     bundle.getString("GUI.randomizationDone"));
@@ -953,6 +998,39 @@ public class NewRandomizerGUI {
             attemptToLogException(ex, "GUI.saveFailed", "GUI.saveFailedNoLog", settings.toString(), Long.toString(seed));
             if (verboseLog != null) {
                 verboseLog.close();
+            }
+        }
+    }
+
+    private void finalizeLog(PrintStream verboseLog, ByteArrayOutputStream baos, boolean raceMode, AtomicInteger finishedCV, String filename) {
+        // Log?
+        verboseLog.close();
+        byte[] out = baos.toByteArray();
+
+        if (raceMode) {
+            JOptionPane.showMessageDialog(frame,
+                    String.format(bundle.getString("GUI.raceModeCheckValuePopup"),
+                            finishedCV.get()));
+        } else {
+            int response = JOptionPane.showConfirmDialog(frame,
+                    bundle.getString("GUI.saveLogDialog.text"),
+                    bundle.getString("GUI.saveLogDialog.title"),
+                    JOptionPane.YES_NO_OPTION);
+            if (response == JOptionPane.YES_OPTION) {
+                try {
+                    FileOutputStream fos = new FileOutputStream(filename + ".log");
+                    fos.write(0xEF);
+                    fos.write(0xBB);
+                    fos.write(0xBF);
+                    fos.write(out);
+                    fos.close();
+                } catch (IOException e) {
+                    JOptionPane.showMessageDialog(frame,
+                            bundle.getString("GUI.logSaveFailed"));
+                    return;
+                }
+                JOptionPane.showMessageDialog(frame,
+                        String.format(bundle.getString("GUI.logSaved"), filename));
             }
         }
     }

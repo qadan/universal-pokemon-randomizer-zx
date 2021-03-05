@@ -336,4 +336,18 @@ public class FileFunctions {
         }
         return out;
     }
+
+    public static File appendSeedCount(File original, int i) {
+        String filename = original.getName();
+        int last_index = filename.lastIndexOf('.');
+        // Failure to append seed count; could not remove extension.
+        if (last_index < 0) {
+            return null;
+        }
+        String new_filename = filename.substring(0, last_index) +
+                '_' +
+                i +
+                filename.substring(last_index);
+        return new File(original.getAbsolutePath().replace(original.getName(), "") + new_filename);
+    }
 }
