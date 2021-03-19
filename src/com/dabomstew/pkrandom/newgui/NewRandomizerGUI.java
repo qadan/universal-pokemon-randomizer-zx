@@ -587,6 +587,9 @@ public class NewRandomizerGUI {
                         if (this.unloadGameOnSuccess) {
                             romHandler = null;
                         }
+                        else {
+                            reinitializeRomHandler();
+                        }
                         initialState();
                     });
                 });
