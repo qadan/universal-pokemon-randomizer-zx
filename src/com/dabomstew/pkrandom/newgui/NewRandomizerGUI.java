@@ -966,6 +966,8 @@ public class NewRandomizerGUI {
                             if (this.unloadGameOnSuccess) {
                                 romHandler = null;
                                 initialState();
+                            } else {
+                                reinitializeRomHandler();
                             }
                         } else {
                             // Compile a config string
@@ -982,6 +984,8 @@ public class NewRandomizerGUI {
                             if (this.unloadGameOnSuccess) {
                                 romHandler = null;
                                 initialState();
+                            } else {
+                                reinitializeRomHandler();
                             }
                         }
                     });
@@ -1286,6 +1290,36 @@ public class NewRandomizerGUI {
         label.setCursor(new java.awt.Cursor(Cursor.HAND_CURSOR));
         Object[] messages = {text,label};
         JOptionPane.showMessageDialog(frame, messages);
+    }
+
+    // This is only intended to be used with the "Keep Game Loaded After Randomizing" setting; it assumes that
+    // the game has already been loaded once, and we just need to reload the same game to reinitialize the
+    // RomHandler. Don't use this for other purposes unless you know what you're doing.
+    private void reinitializeRomHandler() {
+        String currentFN = this.romHandler.loadedFilename();
+        for (RomHandler.Factory rhf : checkHandlers) {
+            if (rhf.isLoadable(currentFN)) {
+                this.romHandler = rhf.create(RandomSource.instance());
+                opDialog = new OperationDialog(bundle.getString("GUI.loadingText"), frame, true);
+                Thread t = new Thread(() -> {
+                    SwingUtilities.invokeLater(() -> opDialog.setVisible(true));
+                    try {
+                        this.romHandler.loadRom(currentFN);
+                        if (gameUpdates.containsKey(this.romHandler.getROMCode())) {
+                            this.romHandler.loadGameUpdate(gameUpdates.get(this.romHandler.getROMCode()));
+                        }
+                    } catch (Exception ex) {
+                        attemptToLogException(ex, "GUI.loadFailed", "GUI.loadFailedNoLog", null, null);
+                    }
+                    SwingUtilities.invokeLater(() -> {
+                        this.opDialog.setVisible(false);
+                    });
+                });
+                t.start();
+
+                return;
+            }
+        }
     }
 
     private void restoreStateFromSettings(Settings settings) {
@@ -1884,6 +1918,7 @@ public class NewRandomizerGUI {
         ptFollowMegaEvosCheckBox.setVisible(true);
         ptFollowMegaEvosCheckBox.setEnabled(false);
         ptFollowMegaEvosCheckBox.setSelected(false);
+        pokemonAbilitiesPanel.setVisible(true);
         paUnchangedRadioButton.setVisible(true);
         paUnchangedRadioButton.setEnabled(false);
         paUnchangedRadioButton.setSelected(false);
@@ -2534,7 +2569,7 @@ public class NewRandomizerGUI {
                 stpSwapLegendariesSwapStandardsRadioButton.setEnabled(true);
                 stpRandomCompletelyRadioButton.setEnabled(true);
                 stpRandomSimilarStrengthRadioButton.setEnabled(true);
-                stpLimitMainGameLegendariesCheckBox.setVisible(pokemonGeneration >= 3);
+                stpLimitMainGameLegendariesCheckBox.setVisible(romHandler.hasMainGameLegendaries());
                 stpLimitMainGameLegendariesCheckBox.setEnabled(false);
                 stpAllowAltFormesCheckBox.setVisible(romHandler.hasStaticAltFormes());
                 stpSwapMegaEvosCheckBox.setVisible(pokemonGeneration == 6 && !romHandler.forceSwapStaticMegaEvos());
@@ -2608,13 +2643,13 @@ public class NewRandomizerGUI {
 
             tpAdditionalPokemonForLabel.setVisible(additionalPokemonAvailable);
             tpBossTrainersCheckBox.setVisible(additionalPokemonAvailable);
-            tpBossTrainersCheckBox.setEnabled(additionalPokemonAvailable);
+            tpBossTrainersCheckBox.setEnabled(false);
             tpBossTrainersSpinner.setVisible(additionalPokemonAvailable);
             tpImportantTrainersCheckBox.setVisible(additionalPokemonAvailable);
-            tpImportantTrainersCheckBox.setEnabled(additionalPokemonAvailable);
+            tpImportantTrainersCheckBox.setEnabled(false);
             tpImportantTrainersSpinner.setVisible(additionalPokemonAvailable);
             tpRegularTrainersCheckBox.setVisible(additionalPokemonAvailable);
-            tpRegularTrainersCheckBox.setEnabled(additionalPokemonAvailable);
+            tpRegularTrainersCheckBox.setEnabled(false);
             tpRegularTrainersSpinner.setVisible(additionalPokemonAvailable);
 
             tpRandomizeTrainerNamesCheckBox.setEnabled(true);
@@ -2899,7 +2934,7 @@ public class NewRandomizerGUI {
         }
 
         if (stpRandomSimilarStrengthRadioButton.isSelected()) {
-            stpLimitMainGameLegendariesCheckBox.setEnabled(true);
+            stpLimitMainGameLegendariesCheckBox.setEnabled(stpLimitMainGameLegendariesCheckBox.isVisible());
         } else {
             stpLimitMainGameLegendariesCheckBox.setEnabled(false);
             stpLimitMainGameLegendariesCheckBox.setSelected(false);
@@ -2980,6 +3015,12 @@ public class NewRandomizerGUI {
             tpSwapMegaEvosCheckBox.setSelected(false);
             tpRandomShinyTrainerPokemonCheckBox.setEnabled(false);
             tpRandomShinyTrainerPokemonCheckBox.setSelected(false);
+            tpBossTrainersCheckBox.setEnabled(false);
+            tpBossTrainersCheckBox.setSelected(false);
+            tpImportantTrainersCheckBox.setEnabled(false);
+            tpImportantTrainersCheckBox.setSelected(false);
+            tpRegularTrainersCheckBox.setEnabled(false);
+            tpRegularTrainersCheckBox.setSelected(false);
         } else {
             tpSimilarStrengthCheckBox.setEnabled(true);
             tpDontUseLegendariesCheckBox.setEnabled(true);
@@ -2992,6 +3033,9 @@ public class NewRandomizerGUI {
                 tpSwapMegaEvosCheckBox.setSelected(false);
             }
             tpRandomShinyTrainerPokemonCheckBox.setEnabled(true);
+            tpBossTrainersCheckBox.setEnabled(tpBossTrainersCheckBox.isVisible());
+            tpImportantTrainersCheckBox.setEnabled(tpImportantTrainersCheckBox.isVisible());
+            tpRegularTrainersCheckBox.setEnabled(tpRegularTrainersCheckBox.isVisible());
         }
 
         if (tpForceFullyEvolvedAtCheckBox.isSelected()) {
@@ -3414,6 +3458,8 @@ public class NewRandomizerGUI {
     }
 
     private void attemptReadConfig() {
+        // Things that should be true by default should be manually set here
+        unloadGameOnSuccess = true;
         File fh = new File(SysConstants.ROOT_PATH + "config.ini");
         if (!fh.exists() || !fh.canRead()) {
             return;

@@ -3143,6 +3143,7 @@ public abstract class AbstractRomHandler implements RomHandler {
                     }
                 }
             }
+            setPokemonAndFormeForStaticEncounter(se, se.pkmn);
         }
         this.setStaticPokemon(currentStaticPokemon);
     }
@@ -4222,7 +4223,11 @@ public abstract class AbstractRomHandler implements RomHandler {
                 for (Evolution ev : pk.evolutionsFrom) {
                     oldEvoPairs.add(new EvolutionPair(ev.from, ev.to));
                     if (generationOfPokemon() >= 7 && ev.from.number == 790) { // Special case for Cosmoem to add Lunala/Solgaleo since we remove the split evo
-                        oldEvoPairs.add(new EvolutionPair(ev.from, pokemonPool.get(ev.from.number + (ev.to.number % 791))));
+                        int oppositeVersionLegendaryNumber = ev.to.number == 791 ? 792 : 791;
+                        Pokemon toPkmn = findPokemonInPoolWithSpeciesID(pokemonPool, oppositeVersionLegendaryNumber);
+                        if (toPkmn != null) {
+                            oldEvoPairs.add(new EvolutionPair(ev.from, toPkmn));
+                        }
                     }
                 }
             }
@@ -5488,6 +5493,7 @@ public abstract class AbstractRomHandler implements RomHandler {
                 if (levelModifier != 0) {
                     newTotem.level = Math.min(100, (int) Math.round(newTotem.level * (1 + levelModifier / 100.0)));
                 }
+                setFormeForStaticEncounter(newTotem, newTotem.pkmn);
             }
 
             if (randomizeAllies) {
@@ -5530,6 +5536,7 @@ public abstract class AbstractRomHandler implements RomHandler {
                 for (StaticEncounter ally: newTotem.allies.values()) {
                     if (levelModifier != 0) {
                         ally.level = Math.min(100, (int) Math.round(ally.level * (1 + levelModifier / 100.0)));
+                        setFormeForStaticEncounter(ally, ally.pkmn);
                     }
                 }
             }
